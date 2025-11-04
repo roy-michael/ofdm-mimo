@@ -26,7 +26,6 @@ def main():
     # --- Run Simulation for each SNR value ---
     for snr_db in snr_db_range:
 
-        # --- Channel ---
         # Convert SNR from dB to linear and calculate required noise power
         snr_linear = 10 ** (snr_db / 10.0)
         noise_power = signal_power / snr_linear
@@ -71,11 +70,6 @@ def main():
     plt.grid(True, which='both')
     plt.show()
 
-
-    # plt.plot(np.real(s_symbols), np.imag(s_symbols), '.')
-    # plt.plot(np.real(y), np.imag(y), '.')
-    # plt.grid(True)
-    # plt.show()
 
 def _to_symbols(int_array: List[int]) -> List[complex]:
 

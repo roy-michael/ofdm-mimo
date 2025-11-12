@@ -10,11 +10,9 @@ Compare with MRC 2
 """
 
 num_symbols = 100000
-amplitude = 1
 
 
 def main():
-
     s0_int, s0_symbols = _get_qpsk(num_symbols * 2)
     s_mrc_int, s_mrc_symbols = _get_qpsk(num_symbols)
 
@@ -28,7 +26,6 @@ def main():
     ser_mrc_array = np.zeros((len(snr_db_range)))
 
     for snr_db_idx, snr_db in enumerate(snr_db_range):
-
         # Convert SNR from dB to linear and calculate required noise power
         snr_linear = 10 ** (snr_db / 10.0)
         rho = 1. / np.sqrt(snr_linear)

@@ -1,3 +1,8 @@
+"""
+This script simulates and visualizes the real and imaginary parts of a Rayleigh fading channel.
+It demonstrates two methods for calculating the channel impulse response: one based on random time delays (taos)
+and another based on random phases (phis).
+"""
 import numpy as np
 from matplotlib import pyplot as plt
 
@@ -6,13 +11,16 @@ bins = 100
 fc = 2.5 * 10e9 # 2.5GHz
 tries = 1000
 
+# The speed of light in meters per second
+C = 3 * 10e8
+
 def main():
 
     re_h_fc = []
     im_h_fc = []
 
     for i in range(tries):
-        re, im = _calc_channel_tao()
+        re, im = _calc_channel_tao()    # ?
 
         re_h_fc.append(re)
         im_h_fc.append(im)
@@ -31,13 +39,21 @@ def main():
 
 
 def _calc_channel_tao():
+    """
+    Calculates the real and imaginary parts of the channel impulse response
+    based on random time delays (taos) and a carrier frequency (fc).
+    """
 
-    taos = np.random.uniform(low=50, high=100, size=multipath) * 1 / (3 * 10e8)
+    taos = np.random.uniform(low=50, high=100, size=multipath) * 1 / C
     h = np.sum(np.exp(-1j * 2 * np.pi * fc * taos))
 
     return h.real, h.imag
 
 def _calc_channel():
+    """
+    Calculates the real and imaginary parts of the channel impulse response
+    based on random phases (phis).
+    """
 
     phis = np.random.uniform(0, 2 * np.pi, multipath)
 

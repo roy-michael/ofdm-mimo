@@ -1,9 +1,19 @@
+"""
+This script simulates a Single-Input Single-Output (SISO) communication system
+with QPSK modulation over AWGN and Rayleigh fading channels.
+It calculates and plots the Symbol Error Rate (SER) versus Signal-to-Noise Ratio (SNR).
+"""
+
+
 from typing import List
 
 import numpy as np
 import matplotlib.pyplot as plt
 
 num_symbols = 500000
+
+
+# Main simulation function
 
 def main():
 
@@ -64,7 +74,17 @@ def main():
     plt.show()
 
 
+# Helper functions
 def _to_symbols(int_array: List[int]) -> List[complex]:
+    """
+    Converts an array of integers to QPSK complex symbols.
+
+    Args:
+        int_array (List[int]): An array of integers representing the QPSK symbols (0, 1, 2, 3).
+
+    Returns:
+        List[complex]: An array of normalized QPSK complex symbols.
+    """
 
     degrees = int_array * 360 / 4.0 + 45  # 45, 135, 225, 315 degrees
     radians = np.deg2rad(degrees)
@@ -74,13 +94,35 @@ def _to_symbols(int_array: List[int]) -> List[complex]:
 
 
 def _from_symbols(array: List[complex]) -> List[int]:
+    """
+    Converts an array of QPSK complex symbols back to integers.
 
+    This function is currently not used in the main simulation but is provided
+    for completeness if inverse mapping is needed.
+
+    Args:
+        array (List[complex]): An array of normalized QPSK complex symbols.
+
+    Returns:
+        List[int]: An array of integers representing the QPSK symbols (0, 1, 2, 3).
+    Converts an array of QPSK complex symbols back to integers.
+    """
     degrees = np.angle(array, deg=True)
     int_array = np.round((degrees - 45) * 4 / 360)
 
     return int_array
 
 def _ml_detect(received_symbols, constellation):
+    """
+    Performs Maximum Likelihood (ML) detection by finding the closest constellation point.
+
+    Args:
+        received_symbols (np.ndarray): Array of received complex symbols.
+        constellation (np.ndarray): Array of ideal constellation points.
+
+    Returns:
+        np.ndarray: Array of detected integer symbols (indices of the closest constellation points).
+    """
     # Find the closest constellation symbol for each received symbol
     distances = np.abs(received_symbols[:, np.newaxis] - constellation)
     return np.argmin(distances, axis=1)

@@ -35,7 +35,7 @@ def main():
         for snr_db_idx, snr_db in enumerate(snr_db_range):
             # Convert SNR from dB to linear and calculate required noise power
             snr_linear = 10 ** (snr_db / 10.0)
-            rho = 1. / np.sqrt(snr_linear)  # Noise scaling factor
+            rho = np.sqrt(0.5) / np.sqrt(snr_linear)  # Noise scaling factor: rho = sqrt(Es / SNR)
 
             n = _get_complex(num_symbols, mrc_n)  # Generate AWGN for N receive antennas
             h = _get_complex(num_symbols, mrc_n)  # Generate Rayleigh fading channel coefficients for N receive antennas

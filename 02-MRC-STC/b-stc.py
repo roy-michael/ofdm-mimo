@@ -9,7 +9,7 @@ SER curve for 2 Tx and 1 Rx antennas
 Compare with MRC 2
 """
 
-num_symbols = 100000
+num_symbols = int(1e6)
 
 
 def main():

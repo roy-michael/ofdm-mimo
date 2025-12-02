@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 from common import _get_complex, _get_qpsk, _to_symbols
 
 """
-Produce the SER curve for 2X2 SM with ML detection
-Compare with STC 2X1
+Produce the SER curve for 2X2, 4X2 SM with ML and ZF
+detection
 """
 
 
@@ -22,7 +22,6 @@ def main(s_symbols, num_symbols, rx, tx):
         snr_linear = 10 ** (snr_db / 10.0)
         rho = np.sqrt(1 / rx) / np.sqrt(snr_linear)  # Noise scaling factor
 
-        # --- SM Path ---
         # Count a vector error if any symbol in the detected vector is wrong.
         sm_detected_symbols_ml = sm_step(s_symbols, num_symbols, rho, rx, tx=tx, detector=_sm_ml_detect)
         sm_detected_symbols_zf = sm_step(s_symbols, num_symbols, rho, rx, tx=tx, detector=_sm_zf_detect)
@@ -45,7 +44,6 @@ def main(s_symbols, num_symbols, rx, tx):
     plt.ylim(10 ** -5, 1)  # Set y-axis limits for log scale
     plt.legend()
     plt.grid(True, which='both')
-    # plt.show()
 
 
 def _sm_ml_detect(received_symbols, H_tilde, constellation, tx):
@@ -97,8 +95,13 @@ def _sm_zf_detect(received_symbols, H_tilde, constellation, tx):
     Performs Zero Forcing detection for Spatial Multiplexing.
     """
 
-    H_tilde_inv = np.sqrt(tx) * np.linalg.pinv(np.conj(H_tilde).transpose(0, 2, 1) @ H_tilde) @ np.conj(H_tilde).transpose(0, 2, 1)
-    # H_tilde_inv = np.linalg.inv(H_tilde)
+    H_tilde_inv = (
+            np.sqrt(tx) *
+            np.linalg.pinv(
+                np.conj(H_tilde).transpose(0, 2, 1) @
+                H_tilde
+            ) @
+            np.conj(H_tilde).transpose(0, 2, 1))
     s_hat = (H_tilde_inv @ received_symbols).squeeze(axis=-1)
 
     return _ls_detect(s_hat, constellation)
@@ -115,15 +118,13 @@ def _ls_detect(received_symbols, constellation):
 
 
 if __name__ == '__main__':
-    num_symbols = int(1e6)
-    M = 2  # tx
-    N = 4  # rx
 
-    configs = [(2, 2), (2, 4)]
+    num_symbols = int(1e6)
+    tx_rx_configs = [(2, 2), (2, 4)]
 
     _, s_symbols = _get_qpsk(num_symbols)
 
-    for tx, rx in configs:
+    for tx, rx in tx_rx_configs:
         s_symbols_mtx = np.vstack([s_symbols[i::tx] for i in range(tx)]).T
         main(s_symbols_mtx, num_symbols // tx, rx, tx)
 

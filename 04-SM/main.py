@@ -11,7 +11,7 @@ Compare with STC 2X1
 """
 
 
-def main(s_int, s_symbols, num_symbols):
+def main(s_symbols, num_symbols):
     # Define SNR range in dB for the simulation and plots
     snr_db_range = np.arange(0, 40, 2)
     sm_ser = []
@@ -26,18 +26,12 @@ def main(s_int, s_symbols, num_symbols):
         # --- SM Path ---
         # Count a vector error if any symbol in the detected vector is wrong.
         sm_detected_symbols = sm_step(s_symbols, num_symbols, rho, 2, 2)
-        # TODO: per vector / symbol?
-        sm_errors = np.sum(np.any(s_symbols != sm_detected_symbols, axis=1))
-        # sm_ser.append(sm_errors / num_symbols)
-        total_symbol_errors = np.sum(s_symbols != sm_detected_symbols)
-        sm_ser.append(total_symbol_errors / (num_symbols * 2))
+        sm_total_errors = np.sum(s_symbols != sm_detected_symbols)
+        sm_ser.append(sm_total_errors / (num_symbols * 2))
 
         # --- STC Path ---
         stc_detected_symbols = stc_step(s_symbols, num_symbols, rho, 2)
-        stc_errors = np.sum(np.any(s_symbols != stc_detected_symbols, axis=1))
-        # stc_ser.append(stc_errors / num_symbols)
-
-        stc_total_errors = np.sum(np.any(s_symbols != stc_detected_symbols, axis=1))
+        stc_total_errors = np.sum(s_symbols != stc_detected_symbols)
         stc_ser.append(stc_total_errors / num_symbols * 2)
 
     # --- Plotting ---
@@ -144,9 +138,7 @@ if __name__ == '__main__':
     M = 2
     N = 2
 
-    s_int, s_symbols = _get_qpsk(num_symbols)
+    _, s_symbols = _get_qpsk(num_symbols)
 
     s_symbols = np.vstack((s_symbols[::M], s_symbols[1::M])).T
-    s_int = np.vstack((s_int[::M], s_int[1::M])).T
-
-    main(s_int, s_symbols, num_symbols // 2)
+    main(s_symbols, num_symbols // 2)

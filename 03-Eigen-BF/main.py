@@ -74,8 +74,7 @@ def bfm_step(s_symbols, num_symbols, rho, rx, tx, constellation=_to_symbols(np.a
     # Hw has shape (num_symbols, rx, 1)
     Hw = H @ w[:, :, np.newaxis]
 
-    # Equalization/Detection
-    # s_hat = np.sum(np.conj(Hw) * y) / np.sum((np.abs(Hw) ** 2))
+    # Equalization/Detection using MRC
     # Combine and equalize: s_hat = (Hw_H * y) / (Hw_H * Hw)
     s_hat = (np.conj(Hw).transpose(0, 2, 1) @ y) / (np.conj(Hw).transpose(0, 2, 1) @ Hw)
 

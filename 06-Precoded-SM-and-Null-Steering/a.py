@@ -1,13 +1,35 @@
+import itertools
+
 import numpy as np
 import matplotlib.pyplot as plt
 
-from common import _get_complex, _get_qpsk, _to_symbols, _ls_detect, _ml_detect, _ml_detect2, _zf_detect
+from common import _get_complex, _get_qpsk, _to_symbols
 
 """
 1. In a 2X2 system, employ SVD precoding x=1/sqrt(2)*V*s
     - Decode with ML and ZF and show identical results
     - Plot the SER curve of each stream separately
 """
+
+
+def _ml_detect(received_symbols, H_tilde, constellation, tx):
+    """
+    Performs Maximum Likelihood (ML) detection for Spatial Multiplexing.
+    """
+
+    # Create all possible transmitted symbol vectors
+    possible_s_options = np.array(
+        list(itertools.product(constellation, repeat=tx))
+    )  # tx * 2^4 (for QAM4)
+
+    # Calculate the expected received signal for each possible transmitted vector.
+    possible_options = H_tilde @ possible_s_options.T  # num_symbols * tx * tx^4
+
+    # Calculate squared Euclidean distance: ||y - H*s_candidate||^2 for all candidates.
+    distances = np.linalg.norm(received_symbols - possible_options, axis=1) ** 2
+
+    min_idx = np.argmin(distances, axis=1)
+    return possible_s_options[min_idx]
 
 
 def main(s_symbols, num_symbols, rx, tx, num_streams):
@@ -21,10 +43,26 @@ def main(s_symbols, num_symbols, rx, tx, num_streams):
         rho = np.sqrt(0.5) / np.sqrt(snr_linear)  # Noise scaling factor
 
         # Count a vector error if any symbol in the detected vector is wrong.
-        detected_ml = bfm_step(s_symbols, num_symbols, rho, rx, num_streams=num_streams, tx=tx, detector=_ml_detect2)
-        detected_zf = bfm_step(s_symbols, num_symbols, rho, rx, num_streams=num_streams, tx=tx, detector=_zf_detect)
-        errors_ml = (s_symbols != detected_ml)
-        errors_zf = (s_symbols != detected_zf)
+        detected_ml = bfm_step(
+            s_symbols,
+            num_symbols,
+            rho,
+            rx,
+            num_streams=num_streams,
+            tx=tx,
+            detector=_ml_detect,
+        )
+        detected_zf = bfm_step(
+            s_symbols,
+            num_symbols,
+            rho,
+            rx,
+            num_streams=num_streams,
+            tx=tx,
+            detector=_zf_detect,
+        )
+        errors_ml = s_symbols != detected_ml
+        errors_zf = s_symbols != detected_zf
 
         ser_array[snr_db_idx][0] = np.sum(errors_ml) / (num_symbols * num_streams)
         ser_array[snr_db_idx][1] = np.sum(errors_zf) / (num_symbols * num_streams)
@@ -37,26 +75,37 @@ def main(s_symbols, num_symbols, rx, tx, num_streams):
     plt.figure(figsize=(10, 6))
 
     styles = [
-        ("Precoded SM - ML 2x2", 'r-'),
-        ("Precoded SM - ZF", 'b-'),
-        ("Precoded SM-ML S1", 'g--'),
-        ("Precoded SM-ZF S1", 'y--'),
-        ("Precoded SM-ML S2", 'g:'),
-        ("Precoded SM-ZF S2", 'y:')
+        ("Precoded SM - ML 2x2", "r-"),
+        ("Precoded SM - ZF", "b-"),
+        ("Precoded SM-ML S1", "g--"),
+        ("Precoded SM-ZF S1", "y--"),
+        ("Precoded SM-ML S2", "g:"),
+        ("Precoded SM-ZF S2", "y:"),
     ]
     for tp_idx, tp_ser in enumerate(ser_array.T):
-        plt.semilogy(snr_db_range, tp_ser, styles[tp_idx][1], label=f'{styles[tp_idx][0]}')
+        plt.semilogy(
+            snr_db_range, tp_ser, styles[tp_idx][1], label=f"{styles[tp_idx][0]}"
+        )
 
-    plt.title('Symbol Error Rate (SER) vs. SNR for QPSK with Precoded SM')
+    plt.title("Symbol Error Rate (SER) vs. SNR for QPSK with Precoded SM")
     plt.xlabel("SNR (Es/N0) [dB]")
     plt.ylabel("Symbol Error Rate (SER)")
-    plt.ylim(10 ** -5, 1)  # Set y-axis limits for log scale
+    plt.ylim(10**-5, 1)  # Set y-axis limits for log scale
     plt.legend()
-    plt.grid(True, which='both')
+    plt.grid(True, which="both")
     plt.show()
 
 
-def bfm_step(s_symbols, num_symbols, rho, rx, tx, num_streams, constellation=_to_symbols(np.arange(0, 4)), detector=_ml_detect2):
+def bfm_step(
+    s_symbols,
+    num_symbols,
+    rho,
+    rx,
+    tx,
+    num_streams,
+    constellation=_to_symbols(np.arange(0, 4)),
+    detector=_ml_detect,
+):
     # Generate a batch of channels, one for each symbol
     # H has shape (num_symbols, rx, tx)
     H = _get_complex(num_symbols, col=tx, rows=rx)  # num_symbols * tx * rx Channels
@@ -91,17 +140,46 @@ def bfm_step(s_symbols, num_symbols, rho, rx, tx, num_streams, constellation=_to
 # TODO: make sure it is normalized!!!
 def precode(s_symbols, Vh, num_streams, tx):
     V = np.conj(Vh).transpose(0, 2, 1)
-    precode_matrix = V[:, :, :num_streams]    # making sure precode matrix size according to stream num
-    return (1 / np.sqrt(tx)) * precode_matrix @ s_symbols[:, :, np.newaxis], precode_matrix
+    precode_matrix = V[
+        :, :, :num_streams
+    ]  # making sure precode matrix size according to stream num
+    return (1 / np.sqrt(tx)) * precode_matrix @ s_symbols[
+        :, :, np.newaxis
+    ], precode_matrix
 
 
-if __name__ == '__main__':
+def _zf_detect(received_symbols, H_tilde, constellation, tx):
+    """
+    Performs Zero Forcing detection for Spatial Multiplexing.
+    """
+
+    H_tilde_inv = (
+        np.sqrt(tx)
+        * np.linalg.pinv(np.conj(H_tilde).transpose(0, 2, 1) @ H_tilde)
+        @ np.conj(H_tilde).transpose(0, 2, 1)
+    )
+    s_hat = (H_tilde_inv @ received_symbols).squeeze(axis=-1)
+
+    return _ls_detect(s_hat, constellation)
+
+
+# Find the closest constellation symbol for each received symbol
+def _ls_detect(received_symbols, constellation):
+    distances = np.abs(received_symbols[:, :, np.newaxis] - constellation) ** 2
+
+    # Find the index of the minimum distance for each symbol in the vector
+    # Return the detected symbols from the constellation
+    min_indices = np.argmin(distances, axis=2)
+    return constellation[min_indices]
+
+
+if __name__ == "__main__":
 
     num_symbols = int(1e6)
     tx, rx = (2, 2)
 
     _, s_symbols = _get_qpsk(num_symbols)
-    num_streams  = min(tx, rx)
+    num_streams = min(tx, rx)
     s_symbols_mtx = np.vstack([s_symbols[i::num_streams] for i in range(num_streams)]).T
     main(s_symbols_mtx, num_symbols // num_streams, rx, tx, num_streams)
 

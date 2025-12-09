@@ -5,8 +5,6 @@ from common import (
     _get_complex,
     _get_qpsk,
     _to_symbols,
-    _ls_detect,
-    _ml_detect,
 )
 
 """
@@ -77,7 +75,9 @@ def main(s_symbols, r_symbols, num_symbols, rx, tx):
 
     styles = [("MRC", "b-"), ("MVDR", "r-"), ("MRC3 (no interference)", "g--")]
     for tp_idx, tp_ser in enumerate(ser_array.T):
-        plt.semilogy(snr_db_range, tp_ser, styles[tp_idx][1], label=f"{styles[tp_idx][0]}")
+        plt.semilogy(
+            snr_db_range, tp_ser, styles[tp_idx][1], label=f"{styles[tp_idx][0]}"
+        )
 
     plt.title("MRC and MVDR Rayleigh 4 Antennas at SIR=5dB")
     plt.xlabel("SNR (Es/N0) [dB]")
@@ -95,7 +95,7 @@ def step(
     rho,
     rx,
     tx,
-    detector=_ml_detect,
+    detector,
     decoder="mvdr",
     with_interference=True,
 ):
@@ -142,6 +142,24 @@ def decode_mvdr(y, h, g, pg, noise_power, rx):
     C_inv = np.linalg.inv(C)
 
     return (h_h @ C_inv @ y) / (h_h @ C_inv @ h)
+
+
+# Find the closest constellation symbol for each received symbol
+def _ls_detect(received_symbols, constellation):
+    distances = np.abs(received_symbols - constellation) ** 2
+
+    # Find the index of the minimum distance for each symbol in the vector
+    # Return the detected symbols from the constellation
+    min_indices = np.argmin(distances, axis=2)
+    return constellation[min_indices]
+
+
+# Find the closest constellation symbol for each received symbol
+def _ml_detect(received_symbols, constellation):
+    distances = np.abs(received_symbols - constellation)
+    min_distance = np.argmin(distances, axis=1)
+
+    return constellation[min_distance]
 
 
 if __name__ == "__main__":

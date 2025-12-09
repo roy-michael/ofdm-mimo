@@ -32,20 +32,22 @@ def _zf_detect(received_symbols, H_tilde, constellation, tx):
     """
 
     H_tilde_inv = (
-            np.sqrt(tx) *
-            np.linalg.pinv(
-                np.conj(H_tilde).transpose(0, 2, 1) @
-                H_tilde
-            ) @
-            np.conj(H_tilde).transpose(0, 2, 1))
+        np.sqrt(tx)
+        * np.linalg.pinv(np.conj(H_tilde).transpose(0, 2, 1) @ H_tilde)
+        @ np.conj(H_tilde).transpose(0, 2, 1)
+    )
     s_hat = (H_tilde_inv @ received_symbols).squeeze(axis=-1)
 
     return _ls_detect(s_hat, constellation)
 
+
 # Find the closest constellation symbol for each received symbol
 def _ml_detect(received_symbols, constellation):
-    distances = np.abs(received_symbols[:, np.newaxis] - constellation)
-    return np.argmin(distances, axis=1)
+    distances = np.abs(received_symbols - constellation)
+    min_distance = np.argmin(distances, axis=1)
+
+    return constellation[min_distance]
+
 
 def _ml_detect2(received_symbols, H_tilde, constellation, tx):
     """
@@ -64,16 +66,15 @@ def _ml_detect2(received_symbols, H_tilde, constellation, tx):
     min_idx = np.argmin(distances, axis=1)
     return possible_s_options[min_idx]
 
+
 # Find the closest constellation symbol for each received symbol
 def _ls_detect(received_symbols, constellation):
-    distances = np.abs(received_symbols[:, :, np.newaxis] - constellation) ** 2
+    distances = np.abs(received_symbols - constellation) ** 2
 
     # Find the index of the minimum distance for each symbol in the vector
     # Return the detected symbols from the constellation
     min_indices = np.argmin(distances, axis=2)
     return constellation[min_indices]
-
-
 
 
 def _get_complex(num_elements=None, rows=None, col=1, mean=0, std=1):
@@ -82,4 +83,3 @@ def _get_complex(num_elements=None, rows=None, col=1, mean=0, std=1):
     val = np.random.normal(size=size, loc=mean, scale=std).view(np.complex128) / np.sqrt(2)
 
     return val if rows else np.squeeze(val)
-

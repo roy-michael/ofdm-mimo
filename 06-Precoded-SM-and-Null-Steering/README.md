@@ -6,7 +6,7 @@
 
 2. Consider a receiver with 4 antennas and the model:
 
-$ \mathbf{y} = \mathbf{h}s + \sqrt{P_g}\mathbf{g}r + \rho\mathbf{n} $
+$\mathbf{y} = \mathbf{h}s + \sqrt{P_g}\mathbf{g}r + \rho\mathbf{n}$
 
 where $\mathbf{h}$, $\mathbf{g}$ and $r$ are $CN(0,1)$ iid and $P_g = 0.3162$ (5dB SIR).
    * Decode with MRC.

@@ -40,26 +40,18 @@ def main(s_symbols, num_symbols, rx, tx, num_streams):
     for snr_db_idx, snr_db in enumerate(snr_db_range):
         # Convert SNR from dB to linear and calculate required noise power
         snr_linear = 10 ** (snr_db / 10.0)
-        rho = np.sqrt(0.5) / np.sqrt(snr_linear)  # Noise scaling factor
+        noise_power = 1 / snr_linear
+        rho = np.sqrt(noise_power / 2)  # Noise scaling factor
 
         # Count a vector error if any symbol in the detected vector is wrong.
-        detected_ml = bfm_step(
+        detected_ml, detected_zf = bfm_step(
             s_symbols,
             num_symbols,
             rho,
             rx,
             num_streams=num_streams,
             tx=tx,
-            detector=_ml_detect,
-        )
-        detected_zf = bfm_step(
-            s_symbols,
-            num_symbols,
-            rho,
-            rx,
-            num_streams=num_streams,
-            tx=tx,
-            detector=_zf_detect,
+            detectors=[_ml_detect, _zf_detect],
         )
         errors_ml = s_symbols != detected_ml
         errors_zf = s_symbols != detected_zf
@@ -76,18 +68,18 @@ def main(s_symbols, num_symbols, rx, tx, num_streams):
 
     styles = [
         ("Precoded SM - ML 2x2", "r-"),
-        ("Precoded SM - ZF", "b-"),
-        ("Precoded SM-ML S1", "g--"),
-        ("Precoded SM-ZF S1", "y--"),
-        ("Precoded SM-ML S2", "g:"),
-        ("Precoded SM-ZF S2", "y:"),
+        ("Precoded SM - ZF 2x2", "b--"),
+        ("Precoded SM-ML Stream-1", "g-"),
+        ("Precoded SM-ZF Stream-1", "y--"),
+        ("Precoded SM-ML Stream-2", "c-"),
+        ("Precoded SM-ZF Stream-2", "m--"),
     ]
     for tp_idx, tp_ser in enumerate(ser_array.T):
         plt.semilogy(
             snr_db_range, tp_ser, styles[tp_idx][1], label=f"{styles[tp_idx][0]}"
         )
 
-    plt.title("Symbol Error Rate (SER) vs. SNR for QPSK with Precoded SM")
+    plt.title("Symbol Error Rate (SER) vs. SNR for 2x2 QPSK with SVD Precoded")
     plt.xlabel("SNR (Es/N0) [dB]")
     plt.ylabel("Symbol Error Rate (SER)")
     plt.ylim(10**-5, 1)  # Set y-axis limits for log scale
@@ -104,7 +96,7 @@ def bfm_step(
     tx,
     num_streams,
     constellation=_to_symbols(np.arange(0, 4)),
-    detector=_ml_detect,
+    detectors=[_ml_detect],
 ):
     # Generate a batch of channels, one for each symbol
     # H has shape (num_symbols, rx, tx)
@@ -126,12 +118,10 @@ def bfm_step(
     y += rho * n
 
     # For detection, we need the effective channel.
-    # x = F s, where F is the precoder. y = H F s + n. H_eff = H F.
     H_eff = (1 / np.sqrt(tx)) * H @ precode_matrix
 
     # Detections
-    # return detector(y, H_tilde, constellation, tx)
-    return detector(y, H_eff, constellation, num_streams)
+    return [detector(y, H_eff, constellation, num_streams) for detector in detectors]
 
 
 # Precode the symbols.
@@ -153,11 +143,8 @@ def _zf_detect(received_symbols, H_tilde, constellation, tx):
     Performs Zero Forcing detection for Spatial Multiplexing.
     """
 
-    H_tilde_inv = (
-        np.sqrt(tx)
-        * np.linalg.pinv(np.conj(H_tilde).transpose(0, 2, 1) @ H_tilde)
-        @ np.conj(H_tilde).transpose(0, 2, 1)
-    )
+    H_tilde_h = np.conj(H_tilde).transpose(0, 2, 1)
+    H_tilde_inv = np.linalg.pinv(H_tilde_h @ H_tilde) @ H_tilde_h
     s_hat = (H_tilde_inv @ received_symbols).squeeze(axis=-1)
 
     return _ls_detect(s_hat, constellation)

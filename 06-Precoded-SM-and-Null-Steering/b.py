@@ -19,18 +19,15 @@ where h, g and r are CN(0,1) iid and pg = 0.3162 (5dB SIR)
 
 def main(s_symbols, r_symbols, num_symbols, rx, tx):
     # Define SNR range in dB for the simulation and plots
-    snr_db_range = np.arange(0, 40, 2)
+    snr_db_range = np.arange(0, 20, 2)
     ser_array = np.zeros((len(snr_db_range), 3))
 
     for snr_db_idx, snr_db in enumerate(snr_db_range):
         # Convert SNR from dB to linear and calculate required noise power
         snr_linear = 10 ** (snr_db / 10.0)
 
-        # rho = np.sqrt(0.5) / np.sqrt(snr_linear)  # Noise scaling factor
-        # rho = 1 / snr_linear  # Noise scaling factor
-        rho = np.sqrt((1 / snr_linear) / 2)
-
-        # Noise power is 1/snr_linear assuming symbol power is 1
+        # Noise power is the variance of the noise and represents it's average power.
+        # It is 1/snr_linear assuming symbol power is 1.
         noise_power = 1 / snr_linear
 
         # Count a vector error if any symbol in the detected vector is wrong.
@@ -39,7 +36,7 @@ def main(s_symbols, r_symbols, num_symbols, rx, tx):
                 s_symbols,
                 r_symbols,
                 num_symbols,
-                rho,
+                noise_power,
                 rx,
                 tx=tx,
                 decoder="mrc",
@@ -49,7 +46,7 @@ def main(s_symbols, r_symbols, num_symbols, rx, tx):
                 s_symbols,
                 r_symbols,
                 num_symbols,
-                rho,
+                noise_power,
                 rx,
                 tx=tx,
                 decoder="mvdr",
@@ -59,7 +56,7 @@ def main(s_symbols, r_symbols, num_symbols, rx, tx):
                 s_symbols,
                 r_symbols,
                 num_symbols,
-                rho,
+                noise_power,
                 3,
                 tx=tx,
                 decoder="mrc",
@@ -92,7 +89,7 @@ def step(
     s_symbols,
     r_symbols,
     num_symbols,
-    rho,
+    noise_power,
     rx,
     tx,
     detector,
@@ -110,6 +107,9 @@ def step(
     yg = np.sqrt(pg) * G @ r_symbols[:, np.newaxis]
 
     # Add AWGN
+    # rho is the noise scaling factor applied to the random noise generator to achieve the desired power.
+    # (The /2 accounts for the complex noise having two independent parts, real and imaginary).
+    rho = np.sqrt(noise_power / 2)
     n = _get_complex(num_symbols, col=tx, rows=rx)
 
     y = yh
@@ -121,7 +121,11 @@ def step(
     y += rho * n
 
     # Decoding
-    s_hat = decode_mvdr(y, H, G, pg, rho, rx) if decoder == "mvdr" else decode_mrc(H, y)
+    s_hat = (
+        decode_mvdr(y, H, G, pg, noise_power, rx)
+        if decoder == "mvdr"
+        else decode_mrc(H, y)
+    )
 
     # Detections
     return detector(s_hat, constellation)
@@ -135,10 +139,13 @@ def decode_mrc(h, y):
 
 
 def decode_mvdr(y, h, g, pg, noise_power, rx):
+    """
+    The noise_power is already the variance then there is no need to square it
+    """
     g_h = np.conj(g).transpose(0, 2, 1)
     h_h = np.conj(h).transpose(0, 2, 1)
 
-    C = pg * g @ g_h + noise_power**2 * np.eye(rx)
+    C = pg * g @ g_h + noise_power * np.eye(rx)
     C_inv = np.linalg.inv(C)
 
     return (h_h @ C_inv @ y) / (h_h @ C_inv @ h)

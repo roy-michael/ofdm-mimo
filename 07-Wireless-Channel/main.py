@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import List
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -42,7 +41,6 @@ def _channel_phases(taps, fc):
 
 
 def main(taps, T, fs, fc, f_max, Tc):
-
     print(f"response for {len(taps)} taps, with Tc = {Tc} seconds and Fmax = {f_max}Hz")
 
     samples = np.linspace(0, T, int(T * fs), endpoint=False)
@@ -52,8 +50,7 @@ def main(taps, T, fs, fc, f_max, Tc):
     coefficients = _channel_coefficients(taps, num_samples, psd_filter)
     channel_phases = _channel_phases(taps, fc)
 
-    channel_matrix = coefficients * channel_phases
-    channel_matrix = channel_matrix.T
+    channel_matrix = coefficients * channel_phases[:, np.newaxis]
 
     # ---  Perform the Assignment Checks ---
     print(f"Simulation: Tc = {Tc * 1000:.2f} ms")
@@ -83,13 +80,20 @@ def main(taps, T, fs, fc, f_max, Tc):
     print(f"Correlation at dt1 ({dt1_sec * 1000:.2f} ms): {rho_short:.4f} (Expected ~1.0)")
     print(f"Correlation at dt2 ({dt2_sec * 1000:.2f} ms): {rho_long:.4f}")
 
-    # --- Plotting one tap magnitude over time ---
+    # --- Plotting ---
     time_axis = np.arange(num_samples) / fs
-    plt.figure(figsize=(10, 5))
-    plt.plot(time_axis, 20 * np.log10(np.abs(channel_matrix[0, :])))
-    plt.title("Fading Profile of Tap 1 (0ns) over Time")
+    plt.figure(figsize=(10, 6))
+
+    # Plot Tap 1 (Strongest)
+    plt.plot(time_axis, 20 * np.log10(np.abs(channel_matrix[0, :])), label="Tap 1 (0 dB)", alpha=0.8)
+
+    # Plot Tap 6 (Weakest) - Index 5
+    plt.plot(time_axis, 20 * np.log10(np.abs(channel_matrix[5, :])), label="Tap 6 (-20 dB)", alpha=0.8)
+
+    plt.title(f"Fading Profile Comparison (Tc={Tc * 1000:.1f}ms)")
     plt.xlabel("Time (s)")
     plt.ylabel("Magnitude (dB)")
+    plt.legend()
     plt.grid(True)
     plt.show()
 
@@ -110,37 +114,27 @@ def _channel_coefficients(taps, num_samples, psd_filter):
 
     w_freq = np.fft.fft(w)
 
-    w_filtered = np.fft.fft(w_freq * psd_filter)
+    w_time_filtered = np.fft.ifft(w_freq * psd_filter)
 
     # Each tap process must have average power = 1.0 before we apply tap weights
-    row_powers = np.mean(np.abs(w_filtered) ** 2, axis=1, keepdims=True)
-    w_normalized = w_filtered / np.sqrt(row_powers)
+    row_powers = np.mean(np.abs(w_time_filtered) ** 2, axis=1, keepdims=True)
+    w_normalized = w_time_filtered / np.sqrt(row_powers)
 
-    avg_power_lin = [np.sqrt(10 ** (t.avg_power_db / 10)) for t in taps]
+    avg_power_lin = np.array([np.sqrt(_from_db(t.avg_power_db)) for t in taps])
 
-    return w_normalized.T * avg_power_lin
+    return w_normalized * avg_power_lin[:, np.newaxis]
 
 
 def _from_db(power_db):
     return 10 ** (power_db / 10.0)
 
 
-def _channel_frequency_response(t_ns, taps, f_c):
-    delays_sec: List[float] = [((t_ns + t.relative_delay_ns) * NS) for t in taps]
-    cfr = np.array([np.exp(-1j * 2 * np.pi * f_c * delay_sec) for delay_sec in delays_sec])
-
-    # return np.fft.ifft(cfr)
-    return cfr
-
-
 if __name__ == '__main__':
     f_max = 10  # 10Hz
     fc = 2.5e9  # 2.5GHz
-    T = 1  # duration
-    fs = 10e3  # sampling rate
+    T = 1  # duration sec
+    fs = 10e3  # sampling rate 10KHz
     Tc = 9 / (16 * np.pi * f_max)
-
-    # _plot_jakes(T, f_s, f_max)
 
     taps = [
         Tap(0, 0.0),

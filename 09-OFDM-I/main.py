@@ -1,8 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-from scipy.signal import wiener
-
 from common import _get_qpsk, _get_complex
 
 """
@@ -67,17 +65,13 @@ def main():
     rx_h1_active = rx_h1_freq[:, active_indices]
     rx_h2_active = rx_h2_freq[:, active_indices]
 
-    # Channel Estimation
-    # b_k_1_c = wiener(b_k_1)
-    # b_k_2_c = wiener(b_k_2)
-
     # LS Estimation
     H1_est = rx_h1_active[0, :] / all_data_freq[0, :]
     H2_est = rx_h2_active[0, :] / all_data_freq[0, :]
 
     # 2. Perfect Channel Knowledge (Section E)
-    H1_perf_full = np.fft.fftshift(np.fft.fft(h1, n_fft) / np.sqrt(n_fft))
-    H2_perf_full = np.fft.fftshift(np.fft.fft(h2, n_fft) / np.sqrt(n_fft))
+    H1_perf_full = np.fft.fftshift(np.fft.fft(h1, n_fft))
+    H2_perf_full = np.fft.fftshift(np.fft.fft(h2, n_fft))
     H1_perf = H1_perf_full[active_indices]
     H2_perf = H2_perf_full[active_indices]
 
@@ -104,15 +98,15 @@ def main():
     # Visualization
     plt.figure(figsize=(10, 4))
     plt.subplot(1, 2, 1)
-    plt.scatter(np.real(s_h1_est), np.imag(s_h1_est), s=2, alpha=0.6, color='blue')
-    plt.title("QPSK Constellation (Estimated H)")
+    plt.scatter(np.real(s_h2_est), np.imag(s_h2_est), s=2, alpha=0.6, color='blue')
+    plt.title("QPSK Constellation (Estimated H2)")
     plt.xlabel("In-phase")
     plt.ylabel("Quadrature")
     plt.grid(True)
 
     plt.subplot(1, 2, 2)
-    plt.plot(np.abs(H1_perf_full), color='red', label='True |H(k)|')
-    plt.plot(np.abs(H2_perf_full), color='red', label='True |H(k)|')
+    plt.plot(np.abs(H1_perf_full), label='True |H1(k)|')
+    plt.plot(np.abs(H2_perf_full), label='True |H2(k)|')
     plt.title("Frequency Response Magnitude")
     plt.xlabel("Subcarrier Index")
     plt.legend()

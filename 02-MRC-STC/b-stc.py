@@ -55,7 +55,12 @@ def main():
 
         # Equalization/Detection
         s_mrc_hat = np.sum(np.conj(h_mrc) * y_mrc, axis=1) / np.sum((np.abs(h_mrc) ** 2), axis=1)
-        s_stc_hat = (np.linalg.inv(H) @ y_stc[:, :, np.newaxis]).squeeze(axis=-1)
+        
+        # STC Detection:
+        # y_stc = H/sqrt(2) * s + n
+        # inv(H) * y_stc = s/sqrt(2) + inv(H)*n
+        # We need to scale by sqrt(2) to recover the scale of s
+        s_stc_hat = (np.linalg.inv(H) @ y_stc[:, :, np.newaxis]).squeeze(axis=-1) * np.sqrt(2)
 
         # Detections
         constellation = _to_symbols(np.arange(0, 4))

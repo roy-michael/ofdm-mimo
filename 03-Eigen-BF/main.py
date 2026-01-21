@@ -8,10 +8,8 @@ Repeat the Eigen BF case for 2Rx X 2Tx and 2Rx X 4Tx
 Compare with the STC 2X2
 """
 
-num_symbols = 100000
 
-
-def all(s_int, s_symbols, num_symbols):
+def main(s_int, s_symbols, num_symbols):
     s_stc_symbols = np.vstack((s_symbols[::2], s_symbols[1::2])).T
     s_stc_int = np.vstack((s_int[::2], s_int[1::2])).T
     num_stc = num_symbols // 2
@@ -34,7 +32,7 @@ def all(s_int, s_symbols, num_symbols):
     # --- Plotting ---
     plt.figure(figsize=(10, 6))
 
-    styles = [("Eigen BF 2x2", 'r-'), ("Eigen BF 2x4", 'b--'), ("STC 2x2", 'g--')]
+    styles = [("Eigen BF 2x2", 'r-'), ("Eigen BF 4x2", 'b--'), ("STC 2x2", 'g:')]
     for tp_idx, tp_ser in enumerate(ser_array.T):
         plt.semilogy(snr_db_range, tp_ser, styles[tp_idx][1], label=f'{styles[tp_idx][0]}')
 
@@ -107,7 +105,7 @@ def stc_step(s_stc_symbols, num_stc, rho, tx, constellation=_to_symbols(np.arang
 
 
 if __name__ == '__main__':
-    num_symbols = int(100e3)
+    num_symbols = int(1e6)
     s_int, s_symbols = _get_qpsk(num_symbols)
 
-    all(s_int, s_symbols, num_symbols)
+    main(s_int, s_symbols, num_symbols)

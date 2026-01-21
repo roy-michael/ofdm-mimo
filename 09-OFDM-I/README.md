@@ -24,11 +24,3 @@ The simulation implements an OFDM system with 256 subcarriers and a cyclic prefi
 because H2 has deep spectral nulls where the SNR is very low (noise enhancement during equalization).
 *   **Estimated H2 (29.41%):** The combination of channel estimation error and noise enhancement in deep fades leads to 
 the highest EVM.
-
-**Visualizations:**
-*   **Constellation:** The scatter plot shows the received QPSK symbols after equalization for H2 (Estimated). The 
-spread of the points reflects the noise and residual channel effects.
-*   **Frequency Response:** The magnitude response plot confirms that H1 is flat, while H2 exhibits significant 
-frequency selectivity with peaks and nulls.
-
-![OFDM Results](ofdm_i.png)

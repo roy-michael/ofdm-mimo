@@ -8,11 +8,11 @@ from matplotlib import pyplot as plt
 
 multipath = 10
 bins = 100
-fc = 2.5 * 10e9 # 2.5GHz
+fc = 2.5e9 # 2.5GHz
 tries = 1000
 
 # The speed of light in meters per second
-C = 3 * 10e8
+C = 3e8
 
 def main():
 
@@ -20,7 +20,7 @@ def main():
     im_h_fc = []
 
     for i in range(tries):
-        re, im = _calc_channel_tao()    # ?
+        re, im = _calc_channel_tao()
 
         re_h_fc.append(re)
         im_h_fc.append(im)

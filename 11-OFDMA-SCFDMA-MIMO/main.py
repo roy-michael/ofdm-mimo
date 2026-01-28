@@ -25,13 +25,14 @@ Create an OFDMA system with **N_FFT=256** with **L_CP=16** and **4 Rx antennas**
 def main(n_fft, l_cp, n_symbols, tx, rx):
     n_sta_scs = (
         (n_symbols, 50, 0, 2, 0),
-        (n_symbols // 2, 20, 0, 2, 50),
-        (n_symbols // 2, 20, 1, 2, 50))  # (number of symbols, preamble position, number of streams, sc start)
+        (n_symbols, 20, 0, 2, 50),
+        (n_symbols, 20, 1, 2, 50))  # (number of symbols, preamble position, number of streams, sc start)
     qam_streams = []
     n_paths = 10
     ofdm_symbols = []
     s_mtx = []
 
+    # 1. TRANSMITTER SIDE
     for i in range(len(n_sta_scs)):
         n_stream, n_stream_scs, preamble_pos, n_streams, sc_start = n_sta_scs[i]
 
@@ -39,12 +40,10 @@ def main(n_fft, l_cp, n_symbols, tx, rx):
         _, stream = _get_qams(n_stream, qam_size=4)
         qam_streams.append(stream)
 
-        # 2. SC-FDMA (DFT Precoding)
-        # M is n_stream_scs
+        # 2. SC-FDMA (DFT Precoding). M is n_stream_scs
         ofdma_coefficients = _ofdma_modulate(stream, n_stream_scs)
 
-        # 3. Add Preamble (as first symbol)
-        # Note: stream is clipped to n_symbols to maintain assignment constraints
+        # 3. Add Preamble (as symbols)
         preamble = _create_preamble(n_stream_scs, n_streams, preamble_pos)
 
         # 4. IFFT and CP (Generation of time-domain symbols)
@@ -54,19 +53,25 @@ def main(n_fft, l_cp, n_symbols, tx, rx):
         ofdm_symbols.append(np.vstack([preamble_matrix, symbol_matrix]))
         s_mtx.append(ofdm_symbols[i].flatten())
 
-    # s_mtx = [symbol.flatten() for symbol in ofdm_symbols]
+    # Find the maximum signal length to pad others
+    max_len = max(len(s) for s in s_mtx)
+    padded_tx_signals = [np.pad(s, (0, max_len - len(s))) for s in s_mtx]
+    X_tx = np.vstack(padded_tx_signals)
 
-    H_sta0 = _get_channel_mtx(n_fft, l_cp, 1, rx, n_paths)
-    H_sta1 = _get_channel_mtx(n_fft, l_cp, tx, rx, n_paths)
-    b0 = H_sta0 @ s_mtx[0][:, np.newaxis].T
-    b1 = H_sta1 @ np.vstack((s_mtx[1], s_mtx[2]))
+    # 2. RECEIVER SIDE
+    h_total = _get_channel_mtx(rx, tx, n_paths, l_cp)
+    # Apply physical multi-path convolution
+    total_samples = X_tx.shape[1]
+    y_received = np.zeros((rx, total_samples), dtype=complex)
+    for r in range(rx):
+        for t in range(tx):
+            # Applying physical multi-path convolution
+            conv_res = np.convolve(X_tx[t, :], h_total[r, t, :], mode='full')
+            y_received[r, :] += conv_res[:total_samples]
 
-    b0 = np.hstack((b0, np.zeros((rx, b1.shape[1] - b0.shape[1]))))
-
-    y = b0 + b1
 
     # Reshape back to (rx, n_symbols, n_fft + l_cp)
-    y_symbols = y.reshape(y.shape[0], -1, n_fft + l_cp)
+    y_symbols = y_received.reshape(rx, -1, n_fft + l_cp)
 
     # 2. Extract the preamble symbols
     # Let's say indices 0 and 1 are the preambles for STA1
@@ -77,40 +82,62 @@ def main(n_fft, l_cp, n_symbols, tx, rx):
     preamble1_freq = np.fft.fftshift(np.fft.fft(preamble1_time[:, l_cp:], axis=1) / np.sqrt(n_fft), axes=1)
     preamble2_freq = np.fft.fftshift(np.fft.fft(preamble2_time[:, l_cp:], axis=1) / np.sqrt(n_fft), axes=1)
 
-    # 4. Extract H(k) for subcarriers 50-69
+    # 4. Channel Estimation
     # Column 1 of H comes from Preamble 1, Column 2 from Preamble 2
-    H_STA0_est = np.zeros((256, 4, 1), dtype=complex)
-    H_STA0_est[0:50, :, 0] = preamble1_freq[:, 0:50].T
-
-    # 4. Extract H(k) for subcarriers 50-69
-    # Column 1 of H comes from Preamble 1, Column 2 from Preamble 2
-    H_STA1_est = np.zeros((256, 4, 2), dtype=complex)
-    H_STA1_est[50:70, :, 0] = preamble1_freq[:, 50:70].T
-    H_STA1_est[50:70, :, 1] = preamble2_freq[:, 50:70].T
-
-    H_STA0_est_inv = np.linalg.pinv(H_STA0_est)
-    H_STA1_est_inv = np.linalg.pinv(H_STA1_est)
+    mid_fft = n_fft // 2
+    H_est = np.zeros((n_fft, rx, tx), dtype=complex)
+    H_est[mid_fft:mid_fft+50, :, 0] = preamble1_freq[:, 0:50].T
+    H_est[mid_fft+50:mid_fft+70, :, 0] = preamble1_freq[:, 50:70].T
+    H_est[mid_fft+50:mid_fft+70, :, 1] = preamble2_freq[:, 50:70].T
 
     y_no_cp = y_symbols[:, 2:, l_cp:]
-    np_fft_fft = np.fft.fft(y_no_cp, axis=2)
     bk_freq = np.fft.fftshift(np.fft.fft(y_no_cp, axis=1) / np.sqrt(n_fft), axes=1)
 
-    ak0_est = H_STA0_est_inv @ bk_freq.transpose(2, 0, 1)
-    ak1_est = H_STA1_est_inv @ bk_freq.transpose(2, 0, 1)
+    # 5. Linear Detection
+    est_qams = []
 
-    ak_ast = np.hstack((ak0_est, ak1_est))
+    # User 0 (STA0) - Original data was 4 slots
+    s0_ak = np.zeros((50, 4), dtype=complex)
+    for k in range(mid_fft, mid_fft + 50):
+        H_k_sc = H_est[k, :, [0]]
+        # Extract received matrix for this carrier across the 4 data slots
+        Y_k_slots = bk_freq.T[k, 0:4, :]  # (4_slots, 4_rx)
+        # Multiply: (1x4) @ (4x4) -> (1x4)
+        s0_ak[k - mid_fft, :] = (np.linalg.pinv(H_k_sc).T @ Y_k_slots).flatten()
+
+    est_qams.append(_ofdma_demodulate(s0_ak, n_symbols, 50))
+
+    # User 1 (STA1)
+    # H_k_sc: (4, 2), pinv(H): (2, 4)
+    # Y_data_grid[k, 0:10, :]: (10, 4) - 10 slots, 4 rx antennas
+    # We want: (2, 4) @ (4, 10) -> (2, 10) result
+    s1_ak = np.zeros((20, 10, 2), dtype=complex)
+    for k in range(mid_fft + 50, mid_fft + 70):
+        H_k_sc = H_est[k, :, 1:3]
+        Y_k_slots = bk_freq.T[k, 0:10, :]  # (10_slots, 4_rx)
+        # Result is (2, 10)
+        res = np.linalg.pinv(H_k_sc) @ Y_k_slots.T
+        s1_ak[k - (mid_fft + 50), :, :] = res.T  # Store as (SCs, Slots, Streams)
+
+    est_qams.append(_ofdma_demodulate(s1_ak[:, :, 0], n_symbols, 20))
+    est_qams.append(_ofdma_demodulate(s1_ak[:, :, 1], n_symbols, 20))
+
+    # Verification
+    for i in range(3):
+        err = np.sum(np.abs(qam_streams[i] - est_qams[i]) > 1e-9)
+        print(f"Stream {i} Reconstruction: {'PERFECT' if err == 0 else 'ERRORS: ' + str(np.sum(np.abs(qam_streams[i] - est_qams[i])))}")
 
     est_qam_streams = []
 
-    for i in range(len(n_sta_scs)):
-        n_stream, n_stream_scs, preamble_pos, n_streams, sc_start = n_sta_scs[i]
-
-        ofdma_coefficients = _from_ofdm_centered_symbols(n_stream_scs, n_fft, ak_ast[:, i, :], sc_start)
-        qam_stream = _ofdma_demodulate(ofdma_coefficients, n_stream, n_stream_scs)
-        est_qam_streams.append(qam_stream)
-
-    for i in range(len(n_sta_scs)):
-        print(np.sum(qam_streams[i] == est_qam_streams[i]))
+    # for i in range(len(n_sta_scs)):
+    #     n_stream, n_stream_scs, preamble_pos, n_streams, sc_start = n_sta_scs[i]
+    #
+    #     ofdma_coefficients = _from_ofdm_centered_symbols(n_stream_scs, n_fft, ak_ast[:, i, :], sc_start)
+    #     qam_stream = _ofdma_demodulate(ofdma_coefficients, n_stream, n_stream_scs)
+    #     est_qam_streams.append(qam_stream)
+    #
+    # for i in range(len(n_sta_scs)):
+    #     print(np.sum(qam_streams[i] == est_qam_streams[i]))
 
     # 6. Plotting the Magnitude
     # for i in range(len(ofdm_symbols)):
@@ -143,32 +170,6 @@ def _plot(papr_ccdf, title, over_sampling):
     plt.tight_layout()
 
 
-def calculate_ccdf(n_fft, l_cp, qam_size, n_allocation_tones, n_oversampling, n_ofdm_symbols=10000):
-    """
-    Simulates OFDM symbols and returns the sorted PAPR values and their CCDF probabilities.
-    """
-
-    _, payload_data = _get_qams(num_symbols=(n_allocation_tones * n_ofdm_symbols), qam_size=qam_size)
-    ofdm_symbols = _as_ofdm_symbols(qam_payload=payload_data,
-                                    allocation_tones=n_allocation_tones,
-                                    n_fft=n_fft,
-                                    l_cp=l_cp,
-                                    over_sample=n_oversampling)
-
-    papr_db_values = _calc_papr(ofdm_symbols)
-
-    # 5. Calculate CCDF using the Sorting Method
-    # Sort values from low to high
-    sorted_papr = np.sort(papr_db_values)
-
-    # Generate the Y-axis (Probability of exceeding)
-    # If we have N items, the probability of exceeding the k-th smallest item
-    # is roughly (N - k) / N
-    y_axis = 1.0 - np.arange(1, len(sorted_papr) + 1) / len(sorted_papr)
-
-    return sorted_papr, y_axis
-
-
 def _create_preamble(n_sc_symbols, n_streams, preamble_pos):
     preamble_data = np.zeros((n_streams, n_sc_symbols), dtype=complex)
     preamble_data[preamble_pos] = np.ones(n_sc_symbols, dtype=complex)
@@ -177,7 +178,7 @@ def _create_preamble(n_sc_symbols, n_streams, preamble_pos):
 
 def _add_preamble(payload_data, n_sc_symbols, n_streams, preamble_pos):
     preamble_data = np.zeros((n_streams, n_sc_symbols), dtype=complex)
-    preamble_data[preamble_pos] = np.ones(n_sc_symbols, dtype=complex)
+    preamble_data[preamble_pos, :] = 1.0
     return np.hstack([preamble_data.flatten(), payload_data])
 
 
@@ -185,30 +186,27 @@ def _create_stream(n_symbols, n_sc):
     return _get_qams(n_symbols * n_sc, qam_size=4)
 
 
-def _get_channel_mtx(n_fft, l_cp, tx, rx, n_paths, fc=2.5e9):
-    """
-    * c. Channels – for each STA consider a channel with:
-      1. 10 equal power paths (uniform phase).
-      2. Each path with random uniform delay up to CP duration (integer sample).
-      3. Each path with uniform $(0, 2*pi] DoA and DoD.
-      4. Assume lambda / 2 ULAs.
-    """
+def _get_channel_mtx(rx, tx, n_paths, l_cp):
 
-    delays = np.random.uniform(0, l_cp, n_paths)
-    phases = np.random.uniform(0, 2 * np.pi, n_paths)
-    doas = np.random.uniform(0, 2 * np.pi, n_paths)
-    dods = np.random.uniform(0, 2 * np.pi, n_paths)
+    H_k = np.zeros((rx, tx, l_cp), dtype=complex)
 
-    coefficients = _get_channel_coefficients(phases, delays, fc)
+    for t in range(tx):
+        delays = np.random.uniform(0, l_cp, n_paths)
+        phases = np.random.uniform(0, 2 * np.pi, n_paths)
+        doas = np.random.uniform(0, 2 * np.pi, n_paths)
+        dods = np.random.uniform(0, 2 * np.pi, n_paths)
 
-    x_doa_theta = _as_steering_mtx(rx, doas)
-    x_dod_phi = _as_steering_mtx(tx, dods)
+        x_doa = _as_steering_mtx(rx, doas)  # (rx, 10)
+        x_dod = _as_steering_mtx(tx, dods)  # (tx, 10)
 
-    # Multiply 3D matrix by 3D matrix
-    H = np.sum(coefficients[:, np.newaxis, np.newaxis] *
-               (x_doa_theta.T[:, :, np.newaxis] @ x_dod_phi.T[:, np.newaxis, :].conj()), axis=0)
+        for p in range(n_paths):
+            # Apply gain, phase, DoA, and DoD (x_dod is 1x1 here since we model per-stream tx)
+            # In a full MIMO model, this would be x_doa @ x_dod.H
+            delay_idx = int(delays[p])
+            path_gain = np.exp(1j * phases[p]) * x_dod[0, p].conj()
+            H_k[:, t, delay_idx] += path_gain * x_doa[:, p]
 
-    return H
+    return H_k
 
 
 def _as_steering_vector(size, phases):
@@ -258,7 +256,7 @@ if __name__ == '__main__':
     n_fft = 256
     l_cp = 16
     rx = 4
-    tx = 2
+    tx = 3  # total streams
     n_symbols = 200
 
     allocation_tones = 100

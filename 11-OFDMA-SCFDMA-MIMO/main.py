@@ -1,8 +1,6 @@
 import numpy as np
-import matplotlib.pyplot as plt
 
-from common import _get_complex, _get_qams, _ofdm_modulate, _calc_papr, _as_ofdm_symbols, _as_ofdm_centered_symbols, \
-    _from_ofdm_centered_symbols
+# --- MAIN SIMULATION ---
 
 """
 Create an OFDMA system with **N_FFT=256** with **L_CP=16** and **4 Rx antennas** at AP.
@@ -23,245 +21,166 @@ Create an OFDMA system with **N_FFT=256** with **L_CP=16** and **4 Rx antennas**
 
 
 def main(n_fft, l_cp, n_symbols, tx, rx):
+    # Configuration: (n_syms, sc_count, preamble_slot, tx_stream_index, sc_start)
+    # tx_stream_index maps to the columns of the global MIMO channel
     n_sta_scs = (
-        (n_symbols, 50, 0, 2, 0),
-        (n_symbols, 20, 0, 2, 50),
-        (n_symbols, 20, 1, 2, 50))  # (number of symbols, preamble position, number of streams, sc start)
+        (n_symbols, 50, 0, 0, 0),  # STA0 (Stream 0)
+        (n_symbols, 20, 0, 1, 50),  # STA1 (Stream 1)
+        (n_symbols, 20, 1, 2, 50))  # STA1 (Stream 2)
+
     qam_streams = []
-    n_paths = 10
-    ofdm_symbols = []
-    s_mtx = []
+    tx_signals = []
+    mid_fft = n_fft // 2
 
     # 1. TRANSMITTER SIDE
     for i in range(len(n_sta_scs)):
-        n_stream, n_stream_scs, preamble_pos, n_streams, sc_start = n_sta_scs[i]
-
-        # 1. Generate QAMs
-        _, stream = _get_qams(n_stream, qam_size=4)
+        n_s, n_sc, pre_slot, tx_idx, sc_start = n_sta_scs[i]
+        _, stream = _get_qams(n_s, qam_size=4)
         qam_streams.append(stream)
 
-        # 2. SC-FDMA (DFT Precoding). M is n_stream_scs
-        ofdma_coefficients = _ofdma_modulate(stream, n_stream_scs)
+        # A. SC-FDMA (DFT Precoding)
+        ofdma_coefficients = _ofdma_modulate(stream, n_sc)
 
-        # 3. Add Preamble (as symbols)
-        preamble = _create_preamble(n_stream_scs, n_streams, preamble_pos)
+        # B. Preamble Generation (Using centered symbols logic)
+        pre_payload = np.zeros((2, n_sc), dtype=complex)
+        pre_payload[pre_slot, :] = 1.0  # Known Pilots
+        pre_matrix = _as_ofdm_centered_symbols(n_sc, n_fft, l_cp, 1, pre_payload, sc_start)
 
-        # 4. IFFT and CP (Generation of time-domain symbols)
-        # Returns matrix of [Num_Symbols x (N_FFT + L_CP)]
-        preamble_matrix = _as_ofdm_centered_symbols(n_stream_scs, n_fft, l_cp, 1, preamble, sc_start)
-        symbol_matrix = _as_ofdm_centered_symbols(n_stream_scs, n_fft, l_cp, 1, ofdma_coefficients, sc_start)
-        ofdm_symbols.append(np.vstack([preamble_matrix, symbol_matrix]))
-        s_mtx.append(ofdm_symbols[i].flatten())
+        # C. Data Generation
+        data_matrix = _as_ofdm_centered_symbols(n_sc, n_fft, l_cp, 1, ofdma_coefficients, sc_start)
 
-    # Find the maximum signal length to pad others
-    max_len = max(len(s) for s in s_mtx)
-    padded_tx_signals = [np.pad(s, (0, max_len - len(s))) for s in s_mtx]
-    X_tx = np.vstack(padded_tx_signals)
+        # Combine and Flatten
+        tx_signals.append(np.concatenate([pre_matrix.flatten(), data_matrix.flatten()]))
 
-    # 2. RECEIVER SIDE
-    h_total = _get_channel_mtx(rx, tx, n_paths, l_cp)
-    # Apply physical multi-path convolution
+    # Padding and stacking for simultaneous Multi-User transmission
+    max_len = max(len(s) for s in tx_signals)
+    X_tx = np.vstack([np.pad(s, (0, max_len - len(s))) for s in tx_signals])
+
+    # 2. CHANNEL APPLICATION
+    h_total = _get_channel_mtx(rx, tx, 10, l_cp)
     total_samples = X_tx.shape[1]
     y_received = np.zeros((rx, total_samples), dtype=complex)
     for r in range(rx):
         for t in range(tx):
-            # Applying physical multi-path convolution
             conv_res = np.convolve(X_tx[t, :], h_total[r, t, :], mode='full')
             y_received[r, :] += conv_res[:total_samples]
 
+    # 3. RECEIVER SIDE
+    slot_len = n_fft + l_cp
+    y_slots = y_received.reshape(rx, -1, slot_len)
 
-    # Reshape back to (rx, n_symbols, n_fft + l_cp)
-    y_symbols = y_received.reshape(rx, -1, n_fft + l_cp)
+    def _fft_and_shift(time_data, n_fft):
+        # time_data is (rx, n_slots, n_fft)
+        freq = np.fft.fft(time_data, axis=2) / np.sqrt(n_fft)
+        return np.fft.fftshift(freq, axes=2)
 
-    # 2. Extract the preamble symbols
-    # Let's say indices 0 and 1 are the preambles for STA1
-    preamble1_time = y_symbols[:, 0, :]
-    preamble2_time = y_symbols[:, 1, :]
+    # A. Extraction
+    Y_pre = _fft_and_shift(y_slots[:, 0:2, l_cp:], n_fft).transpose(2, 1, 0)  # (SCs, Slots, RX)
+    Y_data = _fft_and_shift(y_slots[:, 2:, l_cp:], n_fft).transpose(2, 1, 0)  # (SCs, Slots, RX)
 
-    # 3. Move to Frequency Domain (Remove CP first)
-    preamble1_freq = np.fft.fftshift(np.fft.fft(preamble1_time[:, l_cp:], axis=1) / np.sqrt(n_fft), axes=1)
-    preamble2_freq = np.fft.fftshift(np.fft.fft(preamble2_time[:, l_cp:], axis=1) / np.sqrt(n_fft), axes=1)
-
-    # 4. Channel Estimation
-    # Column 1 of H comes from Preamble 1, Column 2 from Preamble 2
-    mid_fft = n_fft // 2
+    # B. Channel Estimation
     H_est = np.zeros((n_fft, rx, tx), dtype=complex)
-    H_est[mid_fft:mid_fft+50, :, 0] = preamble1_freq[:, 0:50].T
-    H_est[mid_fft+50:mid_fft+70, :, 0] = preamble1_freq[:, 50:70].T
-    H_est[mid_fft+50:mid_fft+70, :, 1] = preamble2_freq[:, 50:70].T
+    # STA0 (Stream 0) and STA1-S1 (Stream 1) from Slot 0
+    H_est[mid_fft:mid_fft + 50, :, 0] = Y_pre[mid_fft:mid_fft + 50, 0, :]
+    H_est[mid_fft + 50:mid_fft + 70, :, 1] = Y_pre[mid_fft + 50:mid_fft + 70, 0, :]
+    # STA1-S2 (Stream 2) from Slot 1
+    H_est[mid_fft + 50:mid_fft + 70, :, 2] = Y_pre[mid_fft + 50:mid_fft + 70, 1, :]
 
-    y_no_cp = y_symbols[:, 2:, l_cp:]
-    bk_freq = np.fft.fftshift(np.fft.fft(y_no_cp, axis=1) / np.sqrt(n_fft), axes=1)
-
-    # 5. Linear Detection
+    # C. Linear Detection
     est_qams = []
 
-    # User 0 (STA0) - Original data was 4 slots
+    # User 0 (STA0) - Detect 4 slots (200 syms / 50 SCs)
     s0_ak = np.zeros((50, 4), dtype=complex)
     for k in range(mid_fft, mid_fft + 50):
-        H_k_sc = H_est[k, :, [0]]
-        # Extract received matrix for this carrier across the 4 data slots
-        Y_k_slots = bk_freq.T[k, 0:4, :]  # (4_slots, 4_rx)
-        # Multiply: (1x4) @ (4x4) -> (1x4)
-        s0_ak[k - mid_fft, :] = (np.linalg.pinv(H_k_sc).T @ Y_k_slots).flatten()
-
+        H_k = H_est[k, :, 0].reshape(rx, 1)
+        s0_ak[k - mid_fft, :] = np.linalg.pinv(H_k) @ Y_data[k, 0:4, :].T
     est_qams.append(_ofdma_demodulate(s0_ak, n_symbols, 50))
 
-    # User 1 (STA1)
-    # H_k_sc: (4, 2), pinv(H): (2, 4)
-    # Y_data_grid[k, 0:10, :]: (10, 4) - 10 slots, 4 rx antennas
-    # We want: (2, 4) @ (4, 10) -> (2, 10) result
+    # User 1 (STA1) - Detect 10 slots for both streams (200 syms / 20 SCs)
     s1_ak = np.zeros((20, 10, 2), dtype=complex)
     for k in range(mid_fft + 50, mid_fft + 70):
-        H_k_sc = H_est[k, :, 1:3]
-        Y_k_slots = bk_freq.T[k, 0:10, :]  # (10_slots, 4_rx)
-        # Result is (2, 10)
-        res = np.linalg.pinv(H_k_sc) @ Y_k_slots.T
-        s1_ak[k - (mid_fft + 50), :, :] = res.T  # Store as (SCs, Slots, Streams)
+        H_k = H_est[k, :, 1:3]
+        res = np.linalg.pinv(H_k) @ Y_data[k, 0:10, :].T
+        s1_ak[k - (mid_fft + 50), :, :] = res.T
 
     est_qams.append(_ofdma_demodulate(s1_ak[:, :, 0], n_symbols, 20))
     est_qams.append(_ofdma_demodulate(s1_ak[:, :, 1], n_symbols, 20))
 
-    # Verification
-    for i in range(3):
-        err = np.sum(np.abs(qam_streams[i] - est_qams[i]) > 1e-9)
-        print(f"Stream {i} Reconstruction: {'PERFECT' if err == 0 else 'ERRORS: ' + str(np.sum(np.abs(qam_streams[i] - est_qams[i])))}")
-
-    est_qam_streams = []
-
-    # for i in range(len(n_sta_scs)):
-    #     n_stream, n_stream_scs, preamble_pos, n_streams, sc_start = n_sta_scs[i]
-    #
-    #     ofdma_coefficients = _from_ofdm_centered_symbols(n_stream_scs, n_fft, ak_ast[:, i, :], sc_start)
-    #     qam_stream = _ofdma_demodulate(ofdma_coefficients, n_stream, n_stream_scs)
-    #     est_qam_streams.append(qam_stream)
-    #
-    # for i in range(len(n_sta_scs)):
-    #     print(np.sum(qam_streams[i] == est_qam_streams[i]))
-
-    # 6. Plotting the Magnitude
-    # for i in range(len(ofdm_symbols)):
-    #     # ofdm_symbols[i] is now (Time_Slots, 272)
-    #     # We plot the first data symbol (index 1)
-    #     # If testing with only preamble, use index 0
-    #     symbol_to_plot = ofdm_symbols[i][1, :] if ofdm_symbols[i].shape[0] > 1 else ofdm_symbols[i][0, :]
-    #
-    #     magnitude = np.abs(symbol_to_plot)
-    #     plt.plot(magnitude, label=labels[i])
-    #
-    # plt.axvline(x=l_cp, color='r', linestyle='--', label='End of CP')
-    # plt.title('Corrected SC-FDMA Magnitude')
-    # plt.legend()
-    # plt.show()
+    # D. Verification
+    for i in range(tx):
+        err = np.sum(np.abs(qam_streams[i] - est_qams[i]) > 1e-8)
+        print(f"Stream {i} Reconstruction: {'PERFECT' if err == 0 else 'ERRORS: ' + str(err)}")
 
 
-def _plot(papr_ccdf, title, over_sampling):
-    plt.figure(figsize=(8, 6))
-    for (m, n_fft, qam_size), (papr_vals, ccdf_probs) in papr_ccdf.items():
-        plt.semilogy(papr_vals, ccdf_probs, linewidth=2,
-                     label=f'M={m}, N_FFT={n_fft}, {qam_size}QAM (OS={over_sampling})')
+# --- HELPER FUNCTIONS ---
 
-    plt.title(title)
-    plt.xlabel("PAPR threshold (dB)")
-    plt.ylabel("Probability (PAPR > threshold)")
-    plt.grid(True, which="both", linestyle='--', alpha=0.7)
-    plt.ylim(1e-4, 1)  # Limit Y-axis to match standard plots
-    plt.legend()
-    plt.tight_layout()
-
-
-def _create_preamble(n_sc_symbols, n_streams, preamble_pos):
-    preamble_data = np.zeros((n_streams, n_sc_symbols), dtype=complex)
-    preamble_data[preamble_pos] = np.ones(n_sc_symbols, dtype=complex)
-    return preamble_data
-
-
-def _add_preamble(payload_data, n_sc_symbols, n_streams, preamble_pos):
-    preamble_data = np.zeros((n_streams, n_sc_symbols), dtype=complex)
-    preamble_data[preamble_pos, :] = 1.0
-    return np.hstack([preamble_data.flatten(), payload_data])
-
-
-def _create_stream(n_symbols, n_sc):
-    return _get_qams(n_symbols * n_sc, qam_size=4)
-
-
-def _get_channel_mtx(rx, tx, n_paths, l_cp):
-
-    H_k = np.zeros((rx, tx, l_cp), dtype=complex)
-
-    for t in range(tx):
-        delays = np.random.uniform(0, l_cp, n_paths)
+def _get_channel_mtx(rx_count, tx_count, n_paths, cp_len):
+    h_n = np.zeros((rx_count, tx_count, cp_len), dtype=complex)
+    for t in range(tx_count):
+        delays = np.random.randint(0, cp_len, n_paths)
         phases = np.random.uniform(0, 2 * np.pi, n_paths)
         doas = np.random.uniform(0, 2 * np.pi, n_paths)
         dods = np.random.uniform(0, 2 * np.pi, n_paths)
-
-        x_doa = _as_steering_mtx(rx, doas)  # (rx, 10)
-        x_dod = _as_steering_mtx(tx, dods)  # (tx, 10)
-
+        x_doa = np.exp(-1j * np.pi * np.arange(rx_count)[:, np.newaxis] * np.sin(doas))
+        x_dod = np.exp(-1j * np.pi * np.arange(1)[:, np.newaxis] * np.sin(dods))
         for p in range(n_paths):
-            # Apply gain, phase, DoA, and DoD (x_dod is 1x1 here since we model per-stream tx)
-            # In a full MIMO model, this would be x_doa @ x_dod.H
-            delay_idx = int(delays[p])
-            path_gain = np.exp(1j * phases[p]) * x_dod[0, p].conj()
-            H_k[:, t, delay_idx] += path_gain * x_doa[:, p]
-
-    return H_k
+            h_n[:, t, int(delays[p])] += np.exp(1j * phases[p]) * x_doa[:, p] * x_dod[0, p].conj()
+    return h_n
 
 
-def _as_steering_vector(size, phases):
-    n = np.arange(size)
-    return np.sum(np.exp(-1j * np.pi * n[:, np.newaxis] * np.sin(phases)), axis=1)
+def get_gray_to_pam_map(bits_per_axis):
+    num_levels = 2 ** bits_per_axis
+    gray_codes = [i ^ (i >> 1) for i in range(num_levels)]
+    levels = np.arange(-num_levels + 1, num_levels, 2)
+    gray_to_level = {gray_val: levels[i] for i, gray_val in enumerate(gray_codes)}
+    return gray_to_level
 
 
-def _as_steering_mtx(size, phases):
-    n = np.arange(size)
-    return np.exp(-1j * np.pi * n[:, np.newaxis] * np.sin(phases))
+def get_qam_constellation(symbol_int, qam_size):
+    if np.log2(qam_size) % 2 != 0:
+        raise ValueError("Only Square QAM supported.")
+    k = int(np.log2(qam_size))
+    k_axis = k // 2
+    pam_map = get_gray_to_pam_map(k_axis)
+    i_bits = symbol_int >> k_axis
+    q_bits = symbol_int & ((1 << k_axis) - 1)
+    return pam_map[i_bits] + 1j * pam_map[q_bits]
+
+
+def _get_qams(num_symbols, qam_size):
+    s_int = np.random.randint(low=0, high=qam_size, size=int(num_symbols))
+    v_func = np.vectorize(get_qam_constellation)
+    return s_int, v_func(s_int, qam_size)
+
+
+def _ofdm_modulate(d_k_mtx, n_fft, l_cp, over_sample):
+    a_k_mtx = np.fft.ifftshift(d_k_mtx, axes=0)
+    s_n_mtx = np.fft.ifft(a_k_mtx, n_fft * over_sample, axis=0) * np.sqrt(n_fft)
+    cp = s_n_mtx[-l_cp:, :]
+    ofdm_symbols_time = np.vstack([cp, s_n_mtx])
+    return ofdm_symbols_time.T
+
+
+def _as_ofdm_centered_symbols(allocation_tones, n_fft, l_cp, over_sample, payload_data_mtx, sc_at_position=0):
+    data_to_map = payload_data_mtx.T
+    mid_nfft = n_fft // 2
+    n_total_symbols = data_to_map.shape[1]
+    d_k_mtx = np.zeros((n_fft, n_total_symbols), dtype=complex)
+    indices = (np.arange(allocation_tones) + mid_nfft + sc_at_position) % n_fft
+    d_k_mtx[indices, :] = data_to_map
+    return _ofdm_modulate(d_k_mtx, n_fft, l_cp, over_sample)
 
 
 def _ofdma_modulate(stream, n_sta_sc):
-    n_ofdma_symbols = len(stream) // n_sta_sc
-    ofdma_symbols = np.zeros((n_ofdma_symbols, n_sta_sc), dtype=complex)
-
-    for i in range(n_ofdma_symbols):
-        sub_stream = stream[i * n_sta_sc: (i + 1) * n_sta_sc]
-        ofdma_symbols[i, :] = np.fft.fft(sub_stream, n_sta_sc)
-
-    return ofdma_symbols
+    n_blocks = len(stream) // n_sta_sc
+    blocks = stream.reshape(n_blocks, n_sta_sc)
+    return np.fft.fft(blocks, axis=1)
 
 
 def _ofdma_demodulate(ofdma_symbols, n_symbols, n_sta_sc):
-    n_ofdma_symbols = ofdma_symbols.shape[1]
-    streams = np.zeros((n_ofdma_symbols, n_sta_sc), dtype=complex)
-
-    for i in range(n_ofdma_symbols):
-        # sub_stream = ofdma_symbols[i * n_sta_sc: (i + 1) * n_sta_sc]
-        sub_stream = np.fft.ifft(ofdma_symbols[:, i], n_sta_sc)
-        streams[i, :] = sub_stream
-
-    return streams.flatten()[:n_symbols]
-
-
-def _get_channel_coefficients(phases, delays, fc, avg_power=1, v=100):
-    c = 3e8
-    fm = fc * v / c
-
-    delay_spreads = avg_power * np.exp(-2j * np.pi * fc * delays)
-    freq_shifts = np.exp(-2j * np.pi * fm * np.cos(phases))
-
-    return delay_spreads * freq_shifts
+    streams = np.fft.ifft(ofdma_symbols, axis=0)
+    return streams.T.flatten()[:n_symbols]
 
 
 if __name__ == '__main__':
-    n_fft = 256
-    l_cp = 16
-    rx = 4
-    tx = 3  # total streams
-    n_symbols = 200
-
-    allocation_tones = 100
-    over_sampling = 4
-    qam_sizes = [4, 16, 64, 256]
-    num_ofdm_symbols = int(10e3)
-
-    main(n_fft, l_cp, n_symbols, tx, rx)
+    main(n_fft=256, l_cp=16, n_symbols=200, tx=3, rx=4)

@@ -127,7 +127,6 @@ def bfm_step(
 # Precode the symbols.
 # employ SVD precoding x=1/sqrt(2)*V*s
 # x will have shape (num_symbols, tx)
-# TODO: make sure it is normalized!!!
 def precode(s_symbols, Vh, num_streams, tx):
     V = np.conj(Vh).transpose(0, 2, 1)
     precode_matrix = V[
